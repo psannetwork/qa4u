@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ドローン物資配布 デバッグツール</title>
+  <style>
+    /* 基本スタイル */
+    body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 0; }
+    header { background: #007bff; color: #fff; padding: 1em; text-align: center; }
+    .main { max-width: 1000px; margin: 2em auto; }
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); padding: 1.5em; }
+
+    /* フォーム */
+    .form-group { display: flex; align-items: center; gap: 0.5em; margin-bottom: 1em; }
+    .form-group label { width: 100px; font-weight: bold; }
+    .form-group input { flex: 1; padding: 0.5em; border: 1px solid #ccc; border-radius: 4px; }
+    .btn { padding: 0.5em 1em; border: none; border-radius: 4px; cursor: pointer; }
+    .btn.add { background: #28a745; color: #fff; }
+    .btn.update { background: #007bff; color: #fff; }
+
+    /* タブ */
+    .tabs { display: flex; gap: 0.5em; margin-bottom: 1em; }
+    .tabs button { flex: 1; padding: 0.75em; background: #e9ecef; border: none; border-radius: 4px; cursor: pointer; }
+    .tabs button.active { background: #fff; border-bottom: 2px solid #007bff; }
+
+    /* パネル */
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    th, td { border: 1px solid #ddd; padding: 0.5em; vertical-align: top; }
+    th { background: #f2f2f2; }
+
+    /* メッセージ */
+    .message { padding: 0.75em; border-radius: 4px; margin-bottom: 1em; display: none; }
+    .message.error { background: #f8d7da; color: #721c24; display: block; }
+    .message.success { background: #d4edda; color: #155724; display: block; }
+
+    /* 入れ子リスト */
+    .nested-list { list-style: none; padding: 0; margin: 0; }
+    .nested-list li { display: flex; gap: 0.5em; margin-bottom: 0.25em; }
+    .nested-list select, .nested-list input { padding: 0.25em; }
+
+    /* 最適化結果 */
+    .section { margin-top: 1em; }
+    .section h3 { margin-bottom: 0.5em; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>ドローン物資配布 デバッグツール</h1>
+</header>
+
+<div class="main">
+  <div class="card">
+
+    <!-- クライアントID入出力 -->
+    <div class="form-group">
+      <label for="client_id">クライアントID:</label>
+      <input type="text" id="client_id" placeholder="空欄でも登録可">
+      <button id="btn_register" class="btn update">登録</button>
+      <button id="btn_set_client" class="btn update">決定</button>
+    </div>
+    <div id="message" class="message"></div>
+
+    <!-- タブ -->
+    <div class="tabs">
+      <button data-tab="supplies" class="active">Supplies</button>
+      <button data-tab="shelters">Shelters</button>
+      <button data-tab="drones">Drones</button>
+      <button data-tab="optimize">Optimize</button>
+    </div>
+
+    <!-- Supplies パネル -->
+    <div id="panel_supplies" class="panel active">
+      <button class="btn add" id="add_supplies">行追加</button>
+      <button class="btn update" id="save_supplies">同期(送信)</button>
+      <button class="btn update" id="load_supplies">更新(取得)</button>
+      <table>
+        <thead>
+          <tr><th>名前</th><th>重量</th><th>コスト</th><th>個数</th><th>操作</th></tr>
+        </thead>
+        <tbody id="tb_supplies"></tbody>
+      </table>
+    </div>
+
+    <!-- Shelters パネル -->
+    <div id="panel_shelters" class="panel">
+      <button class="btn add" id="add_shelters">行追加</button>
+      <button class="btn update" id="save_shelters">同期(送信)</button>
+      <button class="btn update" id="load_shelters">更新(取得)</button>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>緊急度</th><th>在庫</th><th>需要</th><th>輸送中</th><th>操作</th></tr>
+        </thead>
+        <tbody id="tb_shelters"></tbody>
+      </table>
+    </div>
+
+    <!-- Drones パネル -->
+    <div id="panel_drones" class="panel">
+      <button class="btn add" id="add_drones">行追加</button>
+      <button class="btn update" id="save_drones">同期(送信)</button>
+      <button class="btn update" id="load_drones">更新(取得)</button>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>利用可能</th><th>操作</th></tr>
+        </thead>
+        <tbody id="tb_drones"></tbody>
+      </table>
+    </div>
+
+    <!-- Optimize パネル -->
+    <div id="panel_optimize" class="panel">
+      <button class="btn update" id="run_optimize">最適化 実行</button>
+      <div id="opt_result" class="message success"></div>
+      <div id="result_assignments" class="section"></div>
+      <div id="result_leftovers" class="section"></div>
+      <div id="result_need_drones" class="section"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // --- データモデル ---
+  let supplies = [
+    { name: '水', weight: 2, cost: 100, count: 5 },
+    { name: '毛布', weight: 5, cost: 500, count: 3 },
+    { name: '缶詰', weight: 3, cost: 300, count: 4 }
+  ];
+  let shelters = [];
+  let drones = [];
+
+  // --- ユーティリティ ---
+  function showMessage(text, type = 'success') {
+    const msg = document.getElementById('message');
+    msg.textContent = text;
+    msg.className = `message ${type}`;
+  }
+  function clearMessage() {
+    const msg = document.getElementById('message');
+    msg.className = 'message';
+    msg.textContent = '';
+  }
+  function createCell(content = '', editable = true) {
+    const td = document.createElement('td');
+    if (editable) td.contentEditable = "true";
+    td.textContent = content;
+    return td;
+  }
+  function deleteBtn(onDel) {
+    const td = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.textContent = '削除';
+    btn.className = 'btn add';
+    btn.onclick = onDel;
+    td.append(btn);
+    return td;
+  }
+
+  // --- クライアント操作 ---
+  async function registerClient() {
+    try {
+      const res = await fetch('/register_client');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '取得失敗');
+      document.getElementById('client_id').value = data.client_id;
+      showMessage(`ID取得: ${data.client_id}`, 'success');
+    } catch (err) {
+      showMessage(err.message, 'error');
+    }
+  }
+  document.getElementById('btn_register').onclick = registerClient;
+
+  async function setClient() {
+    const cid = document.getElementById('client_id').value.trim();
+    if (!cid) { showMessage('IDを入力してください', 'error'); return; }
+    clearMessage();
+    await loadSupplies();
+    await loadShelters();
+    await loadDrones();
+    showMessage('全データ更新完了', 'success');
+  }
+  document.getElementById('btn_set_client').onclick = setClient;
+
+  // --- タブ切替 ---
+  document.querySelectorAll('.tabs button').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('panel_' + btn.dataset.tab).classList.add('active');
+      clearMessage();
+    };
+  });
+
+  // --- Supplies ---
+  function renderSupplies() {
+    const tbody = document.getElementById('tb_supplies');
+    tbody.innerHTML = '';
+    supplies.forEach((s, i) => {
+      const tr = document.createElement('tr');
+      tr.append(
+        createCell(s.name),
+        createCell(s.weight),
+        createCell(s.cost),
+        createCell(s.count),
+        deleteBtn(() => {
+          const removedName = supplies[i].name;
+          supplies.splice(i, 1);
+          // Shelters の在庫・需要からも自動削除
+          shelters.forEach(sh => {
+            if (sh.stock && sh.stock.hasOwnProperty(removedName)) delete sh.stock[removedName];
+            if (sh.demand && sh.demand.hasOwnProperty(removedName)) delete sh.demand[removedName];
+          });
+          renderSupplies();
+          renderShelters();
+        })
+      );
+      tbody.append(tr);
+    });
+  }
+  document.getElementById('add_supplies').onclick = () => {
+    supplies.push({ name: '', weight: 0, cost: 0, count: 0 });
+    renderSupplies();
+  };
+  async function saveSupplies() {
+    const cid = document.getElementById('client_id').value.trim();
+    if (!cid) { showMessage('IDを入力してください', 'error'); return; }
+    const rows = document.querySelectorAll('#tb_supplies tr');
+    const list = Array.from(rows).map(r => ({
+      name: r.children[0].textContent,
+      weight: Number(r.children[1].textContent),
+      cost: Number(r.children[2].textContent),
+      count: Number(r.children[3].textContent)
+    }));
+    try {
+      const res = await fetch(
+        `/supplies?client_id=${encodeURIComponent(cid)}&supplies=${encodeURIComponent(JSON.stringify(list))}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '送信失敗');
+      showMessage('Supplies 送信完了', 'success');
+    } catch (err) {
+      showMessage(err.message, 'error');
+    }
+  }
+  document.getElementById('save_supplies').onclick = saveSupplies;
+  async function loadSupplies() {
+    const cid = document.getElementById('client_id').value.trim();
+    try {
+      const res = await fetch(`/get_supplies?client_id=${encodeURIComponent(cid)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '取得失敗');
+      supplies = data.supplies;
+      renderSupplies();
+    } catch (err) {
+      showMessage(err.message, 'error');
+    }
+  }
+  document.getElementById('load_supplies').onclick = loadSupplies;
+
+  // --- Shelters ---
+  function renderShelters() {
+    const tbody = document.getElementById('tb_shelters');
+    tbody.innerHTML = '';
+    shelters.forEach((sh, i) => {
+      const tr = document.createElement('tr');
+      tr.append(createCell(sh.id), createCell(sh.urgency));
+      // 在庫
+      const tdStock = document.createElement('td');
+      const ulStock = document.createElement('ul'); ulStock.className = 'nested-list';
+      Object.entries(sh.stock).forEach(([k, v]) => {
+        const li = document.createElement('li');
+        const sel = document.createElement('select');
+        supplies.forEach(x => {
+          const o = document.createElement('option');
+          o.value = x.name; o.text = x.name;
+          sel.append(o);
+        });
+        sel.value = k;
+        const inp = document.createElement('input'); inp.type = 'number'; inp.value = v;
+        const del = document.createElement('button'); del.textContent = '×'; del.className = 'btn add';
+        del.onclick = () => { delete sh.stock[k]; renderShelters(); };
+        li.append(sel, inp, del);
+        ulStock.append(li);
+      });
+      const btnAddStock = document.createElement('button');
+      btnAddStock.textContent = '＋'; btnAddStock.className = 'btn add';
+      btnAddStock.onclick = () => {
+        if (supplies.length > 0) {
+          sh.stock[supplies[0].name] = 1;
+          renderShelters();
+        }
+      };
+      tdStock.append(ulStock, btnAddStock);
+      tr.append(tdStock);
+      // 需要
+      const tdDemand = document.createElement('td');
+      const ulDemand = document.createElement('ul'); ulDemand.className = 'nested-list';
+      Object.entries(sh.demand).forEach(([k, v]) => {
+        const li = document.createElement('li');
+        const sel = document.createElement('select');
+        supplies.forEach(x => {
+          const o = document.createElement('option');
+          o.value = x.name; o.text = x.name;
+          sel.append(o);
+        });
+        sel.value = k;
+        const inp = document.createElement('input'); inp.type = 'number'; inp.value = v;
+        const del = document.createElement('button'); del.textContent = '×'; del.className = 'btn add';
+        del.onclick = () => { delete sh.demand[k]; renderShelters(); };
+        li.append(sel, inp, del);
+        ulDemand.append(li);
+      });
+      const btnAddDemand = document.createElement('button');
+      btnAddDemand.textContent = '＋'; btnAddDemand.className = 'btn add';
+      btnAddDemand.onclick = () => {
+        if (supplies.length > 0) {
+          sh.demand[supplies[0].name] = 1;
+          renderShelters();
+        }
+      };
+      tdDemand.append(ulDemand, btnAddDemand);
+      tr.append(tdDemand);
+      // 輸送中
+      const tdTransit = document.createElement('td');
+      const cbTransit = document.createElement('input');
+      cbTransit.type = 'checkbox'; cbTransit.checked = sh.in_transit;
+      cbTransit.onchange = e => { sh.in_transit = e.target.checked; };
+      tdTransit.append(cbTransit);
+      tr.append(tdTransit);
+      // 操作
+      tr.append(deleteBtn(() => { shelters.splice(i, 1); renderShelters(); }));
+      tbody.append(tr);
+    });
+  }
+  document.getElementById('add_shelters').onclick = () => {
+    shelters.push({ id: '', urgency: 0, stock: {}, demand: {}, in_transit: false });
+    renderShelters();
+  };
+  async function saveShelters() {
+    const cid = document.getElementById('client_id').value.trim();
+    if (!cid) { showMessage('IDを入力してください', 'error'); return; }
+    const rows = document.querySelectorAll('#tb_shelters tr');
+    const list = Array.from(rows).map(r => {
+      const stock = {}, demand = {};
+      r.children[2].querySelectorAll('li').forEach(li => {
+        stock[li.children[0].value] = Number(li.children[1].value);
+      });
+      r.children[3].querySelectorAll('li').forEach(li => {
+        demand[li.children[0].value] = Number(li.children[1].value);
+      });
+      return {
+        id: r.children[0].textContent,
+        urgency: Number(r.children[1].textContent),
+        stock, demand,
+        in_transit: r.children[4].querySelector('input').checked
+      };
+    });
+    try {
+      const res = await fetch(
+        `/shelters?client_id=${encodeURIComponent(cid)}&shelters=${encodeURIComponent(JSON.stringify(list))}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '送信失敗');
+      showMessage('Shelters 送信完了', 'success');
+    } catch (err) {
+      showMessage(err.message, 'error');
+    }
+  }
+  document.getElementById('save_shelters').onclick = saveShelters;
+  async function loadShelters() {
+    const cid = document.getElementById('client_id').value.trim();
+    try {
+      const res = await fetch(`/get_shelters?client_id=${encodeURIComponent(cid)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '取得失敗');
+      shelters = data.shelters;
+      renderShelters();
+    } catch (err) {
+      showMessage(err.message, 'error');
+    }
+  }
+  document.getElementById('load_shelters').onclick = loadShelters;
+
+  // --- Drones ---
+  function renderDrones() {
+    const tb = document.getElementById('tb_drones');
+    tb.innerHTML = '';
+    drones.forEach((dr, i) => {
+      const tr = document.createElement('tr');
+      const c0 = createCell(dr.id);
+      const tdAvail = document.createElement('td');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = dr.available;
+      cb.onchange = e => { dr.available = e.target.checked; };
+      tdAvail.append(cb);
+      tr.append(c0, tdAvail, deleteBtn(() => { drones.splice(i, 1); renderDrones(); }));
+      tb.append(tr);
+    });
+  }
+  document.getElementById('add_drones').onclick = () => {
+    drones.push({ id: '', available: false });
+    renderDrones();
+  };
+  async function saveDrones() {
+    const cid = document.getElementById('client_id').value.trim();
+    if (!cid) { showMessage('IDを入力してください', 'error'); return; }
+    const rows = document.querySelectorAll('#tb_drones tr');
+    const list = Array.from(rows).map(r => ({
+      id: r.children[0].textContent,
+      available: r.children[1].querySelector('input').checked
+    }));
+    try {
+      const res = await fetch(
+        `/drones?client_id=${encodeURIComponent(cid)}&drones=${encodeURIComponent(JSON.stringify(list))}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '送信失敗');
+      showMessage('Drones 送信完了', 'success');
+    } catch (err) {
+      showMessage(err.message, 'error');
+    }
+  }
+  document.getElementById('save_drones').onclick = saveDrones;
+  async function loadDrones() {
+    const cid = document.getElementById('client_id').value.trim();
+    try {
+      const res = await fetch(`/get_drones?client_id=${encodeURIComponent(cid)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '取得失敗');
+      drones = data.drones;
+      renderDrones();
+    } catch (err) {
+      showMessage(err.message, 'error');
+    }
+  }
+  document.getElementById('load_drones').onclick = loadDrones;
+
+  // --- Optimize ---
+  async function runOptimize() {
+    const cid = document.getElementById('client_id').value.trim();
+    if (!cid) { showMessage('IDを入力してください', 'error'); return; }
+    try {
+      const res = await fetch(`/optimize?client_id=${encodeURIComponent(cid)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '最適化失敗');
+
+      // 概要メッセージ
+      const out = document.getElementById('opt_result');
+      out.innerHTML = `
+        <p>利用可能ドローン: ${data.total_available_drones}</p>
+        <p>使用ドローン: ${data.used_drones}</p>
+        <p>総重量: ${data.total_weight}kg</p>
+        <p>総コスト: ¥${data.total_cost}</p>
+      `;
+      out.className = 'message success';
+
+      // 配送割り当て
+      const ra = document.getElementById('result_assignments');
+      let tbl = '<h3>配送割り当て</h3><table><thead><tr><th>避難所ID</th><th>物資名</th><th>個数</th><th>重量</th><th>コスト</th></tr></thead><tbody>';
+      data.assignments.forEach(a => {
+        tbl += `<tr><td>${a['避難所ID']}</td><td>${a['物資名']}</td><td>${a['配送個数']}</td><td>${a['重量合計']}</td><td>¥${a['コスト']}</td></tr>`;
+      });
+      tbl += '</tbody></table>';
+      ra.innerHTML = tbl;
+
+      // 余剰物資
+      const rl = document.getElementById('result_leftovers');
+      let lt = '<h3>余剰物資</h3><table><thead><tr><th>物資名</th><th>残数</th></tr></thead><tbody>';
+      Object.entries(data.leftovers).forEach(([k, v]) => {
+        lt += `<tr><td>${k}</td><td>${v}</td></tr>`;
+      });
+      lt += '</tbody></table>';
+      rl.innerHTML = lt;
+
+      // 必要ドローン数
+      const rd = document.getElementById('result_need_drones');
+      let nt = '<h3>必要ドローン数</h3><table><thead><tr><th>避難所ID</th><th>ドローン数</th></tr></thead><tbody>';
+      Object.entries(data.need_drones).forEach(([k, v]) => {
+        nt += `<tr><td>${k}</td><td>${v}</td></tr>`;
+      });
+      nt += '</tbody></table>';
+      rd.innerHTML = nt;
+
+    } catch (err) {
+      const out = document.getElementById('opt_result');
+      out.textContent = err.message;
+      out.className = 'message error';
+    }
+  }
+  document.getElementById('run_optimize').onclick = runOptimize;
+
+  // 初期描画
+  renderSupplies();
+  renderShelters();
+  renderDrones();
+</script>
+</body>
+</html>
