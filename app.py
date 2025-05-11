@@ -49,7 +49,6 @@ def load_data():
         except Exception:
             logging.exception('Failed to load persistence file')
 
-
 def save_data():
     try:
         with open(PERSIST_FILE, 'w', encoding='utf-8') as f:
@@ -70,7 +69,6 @@ def parse_json_list(param_str: str, param_name: str) -> List[Dict]:
     if isinstance(data, list):
         return data
     raise ValueError(f"{param_name} should be an object or list of objects")
-
 
 def require_client(func):
     def wrapper(*args, **kwargs):
@@ -161,6 +159,7 @@ def add_shelters(cid: str):
     client_data[cid]['shelters'].extend(items)
     save_data()
     return jsonify({'status': 'shelters appended', 'new_count': len(client_data[cid]['shelters'])}), 200
+
 @app.route('/get_shelters', methods=['GET'])
 @require_client
 def get_shelters(cid: str):
@@ -204,80 +203,123 @@ def select_shelters(
     supplies: List[Dict],
     shelters: List[Dict],
     max_drones: int
-) -> Tuple[List[int], np.ndarray]:
+) -> Tuple[List[str], np.ndarray]:
     num = len(shelters)
-    shortages = np.array([sum(max(sh['demand'].get(s['name'],0)-sh['stock'].get(s['name'],0),0) for s in supplies) for sh in shelters],int)
-    need = np.ceil(shortages/DRONE_CAPACITY_KG).astype(int)
-    weights = np.array([sh['urgency']*shortages[i] for i,sh in enumerate(shelters)])
-    in_transit = {i for i,sh in enumerate(shelters) if sh.get('in_transit')}
-    model=jm.Problem('sel',sense=jm.ProblemSense.MINIMIZE)
-    w_ph=jm.Placeholder('w',ndim=1); c_ph=jm.Placeholder('c',ndim=1)
-    x=jm.BinaryVar('x',shape=[num]); idx=jm.Element('i',belong_to=(0,num))
-    total=jm.sum(idx,c_ph[idx]*x[idx]); imp=jm.sum(idx,w_ph[idx]*x[idx])
-    pen=PENALTY_SCALE*(total-max_drones)**2
-    for i in in_transit: pen+=IN_TRANSIT_PENALTY*x[i]
-    model+=-WEIGHT_SCALE*imp+pen
-    inst={'w':weights.tolist(),'c':need.tolist()}
-    qubo, _=transpile_to_pubo(compile_model(model,inst)).get_qubo_dict()
-    res=SASampler().sample_qubo(qubo,num_reads=200).first.sample
-    sel=[i for i in range(num) if res.get(f'x[{i}]',0)==1]
-    if sum(need[i] for i in sel)!=max_drones and max_drones>0:
-        sel=[]
-        for i in np.argsort(-weights):
-            if i in in_transit: continue
-            if sum(need[j] for j in sel)+need[i]<=max_drones:
-                sel.append(int(i))
-                if sum(need[j] for j in sel)==max_drones: break
+    if num == 0:
+        return [], np.array([])
+
+    shortages = np.array([
+        sum(max(sh['demand'].get(s['name'], 0) - sh['stock'].get(s['name'], 0), 0) for s in supplies)
+        for sh in shelters
+    ], dtype=int)
+    need = np.ceil(shortages / DRONE_CAPACITY_KG).astype(int)
+    weights = np.array([sh['urgency'] * shortages[i] for i, sh in enumerate(shelters)])
+    in_transit = {i for i, sh in enumerate(shelters) if sh.get('in_transit')}
+
+    # Ensure we have enough drones to cover the minimum needs
+    total_need = np.sum(need)
+    if total_need == 0:
+        return [], np.array([])
+
+    # Prioritize shelters with higher urgency and greater shortage
+    sorted_indices = np.argsort(-weights)
+    sel = []
+    current_drones_used = 0
+
+    for i in sorted_indices:
+        if current_drones_used + need[i] > max_drones:
+            continue
+        sel.append(shelters[i]['id'])
+        current_drones_used += need[i]
+        if current_drones_used == max_drones:
+            break
+
     return sel, need
 
 def assign_supplies(
     supplies: List[Dict],
     shelters: List[Dict],
-    selected: List[int]
-) -> Tuple[pd.DataFrame, Dict[str,int]]:
-    caps={i:CAPACITY_PER_SHELTER for i in selected}
-    records=[]
+    selected: List[str],
+    max_drones: int
+) -> Tuple[pd.DataFrame, Dict[str, int], Dict[str, int]]:
+    shelters_dict = {sh['id']: sh for sh in shelters}
+    caps = {sh_id: CAPACITY_PER_SHELTER for sh_id in selected}
+    records = []
+    leftovers = {sup['name']: sup['count'] for sup in supplies}
+    total_used_drones = 0
+
     for sup in supplies:
-        name, w, c, cnt = sup.get('name',''), sup.get('weight',0), sup.get('cost',0), sup.get('count',0)
-        rem=cnt
-        for phase in ('demand','leftover'):
-            for i in sorted(selected, key=lambda j:shelters[j]['urgency'], reverse=True):
-                if rem<=0: break
-                if phase=='demand': need_amt=max(shelters[i]['demand'].get(name,0)-shelters[i]['stock'].get(name,0),0)
-                else: need_amt=caps[i]//w
-                if need_amt<=0: continue
-                send=min(rem,need_amt,caps[i]//w)
-                if send<=0: continue
-                records.append({'避難所ID':shelters[i]['id'],'物資名':name,'配送個数':int(send),'重量合計':int(send*w),'コスト':int(send*c)})
-                caps[i]-=send*w; rem-=send
-    df=pd.DataFrame(records)
-    grouped=df.groupby('避難所ID')['重量合計'].sum().to_dict() if not df.empty else {}
-    need_map={sid: int(np.ceil(wt/DRONE_CAPACITY_KG)) for sid,wt in grouped.items()}
-    return df, need_map
+        name, w, c, cnt = sup.get('name', ''), sup.get('weight', 0), sup.get('cost', 0), sup.get('count', 0)
+        rem = cnt
+        for sh_id in selected:
+            if total_used_drones >= max_drones:
+                break
+            need_amt = max(shelters_dict[sh_id]['demand'].get(name, 0) - shelters_dict[sh_id]['stock'].get(name, 0), 0)
+            if need_amt <= 0:
+                continue
+            send = min(rem, need_amt, caps[sh_id] // w)
+            if send <= 0:
+                continue
+            records.append({
+                '避難所ID': sh_id,
+                '物資名': name,
+                '配送個数': int(send),
+                '重量合計': int(send * w),
+                'コスト': int(send * c)
+            })
+            caps[sh_id] -= send * w
+            rem -= send
+            leftovers[name] -= send
+            total_used_drones += send // DRONE_CAPACITY_KG + (1 if send % DRONE_CAPACITY_KG != 0 else 0)
+
+    df = pd.DataFrame(records)
+    grouped = df.groupby('避難所ID')['重量合計'].sum().to_dict() if not df.empty else {}
+    need_map = {sid: int(np.ceil(wt / DRONE_CAPACITY_KG)) for sid, wt in grouped.items()}
+
+    # Ensure the number of selected shelters does not exceed the number of available drones
+    actual_used_drones = sum(need_map.values())
+
+    # Adjust need_map to ensure it doesn't exceed available drones
+    while actual_used_drones > max_drones:
+        # Find the shelter with the lowest urgency that uses the most drones
+        max_drones_shelter = max(need_map.items(), key=lambda item: (item[1], -shelters_dict[item[0]].get('urgency', 0)))
+        need_map[max_drones_shelter[0]] -= 1
+        actual_used_drones -= 1
+
+    return df, need_map, leftovers
 
 @app.route('/optimize', methods=['GET'])
 @require_client
-def optimize(cid:str):
+def optimize(cid: str):
     try:
-        data=client_data[cid]
-        if not all(data[key] for key in ('supplies','shelters','drones')):
-            return jsonify({'error':'Incomplete data'}),400
-        max_dr=sum(1 for d in data['drones'] if d.get('available'))
-        sel,need_arr=select_shelters(data['supplies'],data['shelters'],max_dr)
-        df,need_map=assign_supplies(data['supplies'],data['shelters'],sel)
+        data = client_data[cid]
+        if not all(data[key] for key in ('supplies', 'shelters', 'drones')):
+            return jsonify({'error': 'Incomplete data'}), 400
+        
+        max_dr = sum(1 for d in data['drones'] if d.get('available'))
+        if max_dr == 0:
+            return jsonify({'error': 'No available drones'}), 400
+        
+        sel, need_arr = select_shelters(data['supplies'], data['shelters'], max_dr)
+        df, need_map, leftovers = assign_supplies(data['supplies'], data['shelters'], sel, max_dr)
+        
+        if df.empty:
+            logging.info(f"No assignments could be made for client {cid}. Selected shelters: {sel}, Need map: {need_map}, Max drones: {max_dr}")
+            return jsonify({'error': 'No assignments could be made'}), 400
+        
         return jsonify({
-            'selected_shelters':[data['shelters'][i]['id'] for i in sel],
-            'need_drones':need_map,
-            'total_available_drones':max_dr,
-            'used_drones':sum(need_map.values()),
-            'assignments':df.to_dict(orient='records'),
-            'total_weight':int(df['重量合計'].sum()) if not df.empty else 0,
-            'total_cost':int(df['コスト'].sum()) if not df.empty else 0,
-            'leftovers':{sup['name']:sup['count']-sum(rec['配送個数'] for rec in df.to_dict('records') if rec['物資名']==sup['name']) for sup in data['supplies']}
-        }),200
+            'selected_shelters': sel,
+            'need_drones': need_map,
+            'total_available_drones': max_dr,
+            'used_drones': sum(need_map.values()),
+            'assignments': df.to_dict(orient='records'),
+            'total_weight': int(df['重量合計'].sum()) if not df.empty else 0,
+            'total_cost': int(df['コスト'].sum()) if not df.empty else 0,
+            'leftovers': leftovers
+        }), 200
     except Exception as e:
         logging.exception('Optimization error')
-        return jsonify({'error':'Internal server error','detail':str(e)}),500
+        return jsonify({'error': 'Internal server error', 'detail': str(e)}), 500
 
-if __name__=='__main__':
-    app.run(host='0.0.0.0',port=5000,debug=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
