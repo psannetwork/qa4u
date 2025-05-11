@@ -1,24 +1,21 @@
-# app.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Flask backend for drone deployment and supply distribution optimization
+Flask backend for drone deployment and supply distribution optimization.
+Data persisted to .temp.txt to survive restarts.
 All endpoints use GET requests and JSON format.
 Client data is stored per client_id to avoid mixing.
 Includes error handling to prevent runtime errors.
 Serves HTML client (index.html) and static templates directory.
 Supports replacing and appending supplies, shelters, and drones.
 """
-# Monkey-patch werkzeug for Flask compatibility
-import werkzeug
-import werkzeug.urls
-if not hasattr(werkzeug.urls, 'url_quote'):
-    werkzeug.urls.url_quote = werkzeug.urls.quote
-
-from flask import Flask, request, jsonify, send_from_directory
 import uuid
 import json
 import logging
+import os
+from typing import List, Dict, Tuple
+
+from flask import Flask, request, jsonify, send_from_directory, abort
 import numpy as np
 import pandas as pd
 import jijmodeling as jm
@@ -26,298 +23,261 @@ from jijmodeling_transpiler.core import compile_model
 from jijmodeling_transpiler.core.pubo import transpile_to_pubo
 from openjij import SASampler
 
-# Flask app setup
+# -- Configuration -----------------------------------------------------------
+PERSIST_FILE = '.temp.txt'
+DRONE_CAPACITY_KG = 10
+MAX_TRIPS_PER_SHELTER = 3
+CAPACITY_PER_SHELTER = DRONE_CAPACITY_KG * MAX_TRIPS_PER_SHELTER
+WEIGHT_SCALE = 1.0
+PENALTY_SCALE = 1e3
+IN_TRANSIT_PENALTY = 1e3
+
+# -- Flask App Setup ----------------------------------------------------------
 app = Flask(__name__, static_folder=None, template_folder='templates')
 logging.basicConfig(level=logging.INFO)
 
-# In-memory storage: client_id -> {'supplies': list, 'shelters': list, 'drones': list}
-client_data = {}
+# In-memory storage: client_id -> data dict
+client_data: Dict[str, Dict[str, List[Dict]]] = {}
 
-# Constants
-DRONE_CAPACITY = 10  # kg per drone
-MAX_TRIPS = 3
-CAP_PER_SHELTER = DRONE_CAPACITY * MAX_TRIPS
-W_SCALE = 1.0
-P_SCALE = 1e3
-INTRANSIT_PEN = 1e3
+# -- Persistence -------------------------------------------------------------
+def load_data():
+    global client_data
+    if os.path.exists(PERSIST_FILE):
+        try:
+            with open(PERSIST_FILE, 'r', encoding='utf-8') as f:
+                client_data = json.load(f)
+        except Exception:
+            logging.exception('Failed to load persistence file')
 
-# Utility: validate JSON list or object
-def _parse_json_list(param_str, param_name):
+
+def save_data():
+    try:
+        with open(PERSIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(client_data, f)
+    except Exception:
+        logging.exception('Failed to save persistence file')
+
+load_data()
+
+# -- Utility Functions -------------------------------------------------------
+def parse_json_list(param_str: str, param_name: str) -> List[Dict]:
     try:
         data = json.loads(param_str)
-        if isinstance(data, dict):
-            return [data]
-        if not isinstance(data, list):
-            raise ValueError(f"{param_name} should be a JSON object or list of objects")
-        return data
     except json.JSONDecodeError:
         raise ValueError(f"Invalid JSON for {param_name}")
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, list):
+        return data
+    raise ValueError(f"{param_name} should be an object or list of objects")
 
-# Serve index and static templates
+
+def require_client(func):
+    def wrapper(*args, **kwargs):
+        cid = request.args.get('client_id', '').strip()
+        if not cid or cid not in client_data:
+            return jsonify({'error': 'Invalid or missing client_id'}), 400
+        return func(cid, *args, **kwargs)
+    wrapper.__name__ = func.__name__
+    return wrapper
+
+# -- Routes ------------------------------------------------------------------
 @app.route('/', methods=['GET'])
+@app.route('/index.html', methods=['GET'])
 def index():
     return send_from_directory('templates', 'index.html')
 
 @app.route('/templates/<path:filename>', methods=['GET'])
-def serve_template_file(filename):
+def serve_static(filename: str):
     try:
         return send_from_directory('templates', filename)
     except FileNotFoundError:
-        return jsonify({'error': f'{filename} not found'}), 404
+        abort(404, description=f"{filename} not found")
 
-# Endpoint: Register a new client_id
 @app.route('/register_client', methods=['GET'])
 def register_client():
-    client_id = str(uuid.uuid4())
-    client_data[client_id] = {'supplies': [], 'shelters': [], 'drones': []}
-    return jsonify({'client_id': client_id}), 200
+    cid = str(uuid.uuid4())
+    client_data[cid] = {'supplies': [], 'shelters': [], 'drones': []}
+    save_data()
+    return jsonify({'client_id': cid}), 200
 
-# Endpoint: Replace supplies list
 @app.route('/supplies', methods=['GET'])
-def update_supplies():
-    cid = request.args.get('client_id')
-    data_str = request.args.get('supplies')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
+@require_client
+def update_supplies(cid: str):
+    data_str = request.args.get('supplies', '')
     if not data_str:
         return jsonify({'error': 'Missing supplies parameter'}), 400
     try:
-        items = _parse_json_list(data_str, 'supplies')
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
+        items = parse_json_list(data_str, 'supplies')
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
     client_data[cid]['supplies'] = items
+    save_data()
     return jsonify({'status': 'supplies replaced', 'count': len(items)}), 200
 
-# Endpoint: Append supplies
 @app.route('/add_supplies', methods=['GET'])
-def add_supplies():
-    cid = request.args.get('client_id')
-    data_str = request.args.get('supplies')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
+@require_client
+def add_supplies(cid: str):
+    data_str = request.args.get('supplies', '')
     if not data_str:
         return jsonify({'error': 'Missing supplies parameter'}), 400
     try:
-        items = _parse_json_list(data_str, 'supplies')
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
+        items = parse_json_list(data_str, 'supplies')
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
     client_data[cid]['supplies'].extend(items)
+    save_data()
     return jsonify({'status': 'supplies appended', 'new_count': len(client_data[cid]['supplies'])}), 200
 
-# Endpoint: Replace shelters list
-@app.route('/shelters', methods=['GET'])
-def update_shelters():
-    cid = request.args.get('client_id')
-    data_str = request.args.get('shelters')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
-    if not data_str:
-        return jsonify({'error': 'Missing shelters parameter'}), 400
-    try:
-        items = _parse_json_list(data_str, 'shelters')
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
-    client_data[cid]['shelters'] = items
-    return jsonify({'status': 'shelters replaced', 'count': len(items)}), 200
-
-# Endpoint: Append shelters list
-@app.route('/add_shelters', methods=['GET'])
-def add_shelters():
-    cid = request.args.get('client_id')
-    data_str = request.args.get('shelters')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
-    if not data_str:
-        return jsonify({'error': 'Missing shelters parameter'}), 400
-    try:
-        items = _parse_json_list(data_str, 'shelters')
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
-    client_data[cid]['shelters'].extend(items)
-    return jsonify({'status': 'shelters appended', 'new_count': len(client_data[cid]['shelters'])}), 200
-
-# Endpoint: Replace drones list
-@app.route('/drones', methods=['GET'])
-def update_drones():
-    cid = request.args.get('client_id')
-    data_str = request.args.get('drones')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
-    if not data_str:
-        return jsonify({'error': 'Missing drones parameter'}), 400
-    try:
-        items = _parse_json_list(data_str, 'drones')
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
-    client_data[cid]['drones'] = items
-    return jsonify({'status': 'drones replaced', 'count': len(items)}), 200
-
-# Endpoint: Append drones
-@app.route('/add_drones', methods=['GET'])
-def add_drones():
-    cid = request.args.get('client_id')
-    data_str = request.args.get('drones')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
-    if not data_str:
-        return jsonify({'error': 'Missing drones parameter'}), 400
-    try:
-        items = _parse_json_list(data_str, 'drones')
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
-    client_data[cid]['drones'].extend(items)
-    return jsonify({'status': 'drones appended', 'new_count': len(client_data[cid]['drones'])}), 200
-
-# Retrieval endpoints
 @app.route('/get_supplies', methods=['GET'])
-def get_supplies():
-    cid = request.args.get('client_id')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
+@require_client
+def get_supplies(cid: str):
     return jsonify({'supplies': client_data[cid]['supplies']}), 200
 
+@app.route('/shelters', methods=['GET'])
+@require_client
+def update_shelters(cid: str):
+    data_str = request.args.get('shelters', '')
+    if not data_str:
+        return jsonify({'error': 'Missing shelters parameter'}), 400
+    try:
+        items = parse_json_list(data_str, 'shelters')
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
+    client_data[cid]['shelters'] = items
+    save_data()
+    return jsonify({'status': 'shelters replaced', 'count': len(items)}), 200
+
+@app.route('/add_shelters', methods=['GET'])
+@require_client
+def add_shelters(cid: str):
+    data_str = request.args.get('shelters', '')
+    if not data_str:
+        return jsonify({'error': 'Missing shelters parameter'}), 400
+    try:
+        items = parse_json_list(data_str, 'shelters')
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
+    client_data[cid]['shelters'].extend(items)
+    save_data()
+    return jsonify({'status': 'shelters appended', 'new_count': len(client_data[cid]['shelters'])}), 200
 @app.route('/get_shelters', methods=['GET'])
-def get_shelters():
-    cid = request.args.get('client_id')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
+@require_client
+def get_shelters(cid: str):
     return jsonify({'shelters': client_data[cid]['shelters']}), 200
 
+@app.route('/drones', methods=['GET'])
+@require_client
+def update_drones(cid: str):
+    data_str = request.args.get('drones', '')
+    if not data_str:
+        return jsonify({'error': 'Missing drones parameter'}), 400
+    try:
+        items = parse_json_list(data_str, 'drones')
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
+    client_data[cid]['drones'] = items
+    save_data()
+    return jsonify({'status': 'drones replaced', 'count': len(items)}), 200
+
+@app.route('/add_drones', methods=['GET'])
+@require_client
+def add_drones(cid: str):
+    data_str = request.args.get('drones', '')
+    if not data_str:
+        return jsonify({'error': 'Missing drones parameter'}), 400
+    try:
+        items = parse_json_list(data_str, 'drones')
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
+    client_data[cid]['drones'].extend(items)
+    save_data()
+    return jsonify({'status': 'drones appended', 'new_count': len(client_data[cid]['drones'])}), 200
+
 @app.route('/get_drones', methods=['GET'])
-def get_drones():
-    cid = request.args.get('client_id')
-    if not cid or cid not in client_data:
-        return jsonify({'error': 'Invalid or missing client_id'}), 400
+@require_client
+def get_drones(cid: str):
     return jsonify({'drones': client_data[cid]['drones']}), 200
 
-# Helper: QUBO-based shelter selection
-def select_shelters(supplies, shelters, max_drones):
-    J = len(shelters)
-    shortages = np.zeros(J, int)
-    for j, sh in enumerate(shelters):
-        shortages[j] = sum(
-            max(sh['demand'].get(sup['name'], 0) - sh['stock'].get(sup['name'], 0), 0)
-            for sup in supplies
-        )
-    need = np.ceil(shortages / DRONE_CAPACITY).astype(int)
-    W = np.array([shelters[j]['urgency'] * shortages[j] for j in range(J)], float)
-    in_trans = {j for j, sh in enumerate(shelters) if sh.get('in_transit')}
+# -- Optimization ------------------------------------------------------------
+def select_shelters(
+    supplies: List[Dict],
+    shelters: List[Dict],
+    max_drones: int
+) -> Tuple[List[int], np.ndarray]:
+    num = len(shelters)
+    shortages = np.array([sum(max(sh['demand'].get(s['name'],0)-sh['stock'].get(s['name'],0),0) for s in supplies) for sh in shelters],int)
+    need = np.ceil(shortages/DRONE_CAPACITY_KG).astype(int)
+    weights = np.array([sh['urgency']*shortages[i] for i,sh in enumerate(shelters)])
+    in_transit = {i for i,sh in enumerate(shelters) if sh.get('in_transit')}
+    model=jm.Problem('sel',sense=jm.ProblemSense.MINIMIZE)
+    w_ph=jm.Placeholder('w',ndim=1); c_ph=jm.Placeholder('c',ndim=1)
+    x=jm.BinaryVar('x',shape=[num]); idx=jm.Element('i',belong_to=(0,num))
+    total=jm.sum(idx,c_ph[idx]*x[idx]); imp=jm.sum(idx,w_ph[idx]*x[idx])
+    pen=PENALTY_SCALE*(total-max_drones)**2
+    for i in in_transit: pen+=IN_TRANSIT_PENALTY*x[i]
+    model+=-WEIGHT_SCALE*imp+pen
+    inst={'w':weights.tolist(),'c':need.tolist()}
+    qubo, _=transpile_to_pubo(compile_model(model,inst)).get_qubo_dict()
+    res=SASampler().sample_qubo(qubo,num_reads=200).first.sample
+    sel=[i for i in range(num) if res.get(f'x[{i}]',0)==1]
+    if sum(need[i] for i in sel)!=max_drones and max_drones>0:
+        sel=[]
+        for i in np.argsort(-weights):
+            if i in in_transit: continue
+            if sum(need[j] for j in sel)+need[i]<=max_drones:
+                sel.append(int(i))
+                if sum(need[j] for j in sel)==max_drones: break
+    return sel, need
 
-    model = jm.Problem("drone_alloc", sense=jm.ProblemSense.MINIMIZE)
-    W_ph = jm.Placeholder("W", ndim=1)
-    c_ph = jm.Placeholder("c", ndim=1)
-    x = jm.BinaryVar("x", shape=[J])
-    i = jm.Element("i", belong_to=(0, J))
-
-    usage = jm.sum(i, c_ph[i] * x[i])
-    importance = jm.sum(i, W_ph[i] * x[i])
-    penalty = P_SCALE * (usage - max_drones) ** 2
-    for j in in_trans:
-        penalty += INTRANSIT_PEN * x[j]
-
-    model += -W_SCALE * importance + penalty
-    inst = {"W": W.tolist(), "c": need.tolist()}
-    compiled = compile_model(model, inst)
-    pubo = transpile_to_pubo(compiled)
-    qubo, _ = pubo.get_qubo_dict()
-    result = SASampler().sample_qubo(qubo, num_reads=200).first.sample
-
-    selected = [j for j in range(J) if result.get(f"x[{j}]", 0) == 1]
-    total_need = sum(int(need[j]) for j in selected)
-    if total_need != max_drones:
-        selected = []
-        order = np.argsort(-W)
-        cum = 0
-        for j in order:
-            if j in in_trans:
-                continue
-            if cum + need[j] <= max_drones:
-                selected.append(j)
-                cum += need[j]
-            if cum == max_drones:
-                break
-    return selected, need, W
-
-# Helper: Greedy supply assignment
-def assign_supplies(supplies, shelters, selected):
-    rows = []
-    caps = {j: CAP_PER_SHELTER for j in selected}
-    leftovers = {}
+def assign_supplies(
+    supplies: List[Dict],
+    shelters: List[Dict],
+    selected: List[int]
+) -> Tuple[pd.DataFrame, Dict[str,int]]:
+    caps={i:CAPACITY_PER_SHELTER for i in selected}
+    records=[]
     for sup in supplies:
-        name, weight, cost = sup.get('name'), sup.get('weight'), sup.get('cost')
-        rem = sup.get('count', 0)
-        order = sorted(selected, key=lambda j: shelters[j]['urgency'], reverse=True)
-        # First satisfy demand
-        for j in order:
-            if rem <= 0:
-                break
-            shortage = max(
-                shelters[j]['demand'].get(name, 0) - shelters[j]['stock'].get(name, 0), 0
-            )
-            can = min(shortage, rem, caps[j] // weight)
-            if can > 0:
-                rows.append({
-                    '避難所ID': shelters[j]['id'],
-                    '物資名': name,
-                    '配送個数': int(can),
-                    '重量合計': int(can * weight),
-                    'コスト': int(can * cost)
-                })
-                rem -= can
-                caps[j] -= can * weight
-        # Then use leftover capacity
-        for j in order:
-            if rem <= 0:
-                break
-            space = caps[j] // weight
-            if space > 0:
-                take = min(rem, space)
-                rows.append({
-                    '避難所ID': shelters[j]['id'],
-                    '物資名': name,
-                    '配送個数': int(take),
-                    '重量合計': int(take * weight),
-                    'コスト': int(take * cost)
-                })
-                rem -= take
-                caps[j] -= take * weight
-        leftovers[name] = int(rem)
-    df = pd.DataFrame(rows)
-    total_w = int(df['重量合計'].sum()) if not df.empty else 0
-    total_cost = int(df['コスト'].sum()) if not df.empty else 0
-    return df, total_w, total_cost, leftovers
+        name, w, c, cnt = sup.get('name',''), sup.get('weight',0), sup.get('cost',0), sup.get('count',0)
+        rem=cnt
+        for phase in ('demand','leftover'):
+            for i in sorted(selected, key=lambda j:shelters[j]['urgency'], reverse=True):
+                if rem<=0: break
+                if phase=='demand': need_amt=max(shelters[i]['demand'].get(name,0)-shelters[i]['stock'].get(name,0),0)
+                else: need_amt=caps[i]//w
+                if need_amt<=0: continue
+                send=min(rem,need_amt,caps[i]//w)
+                if send<=0: continue
+                records.append({'避難所ID':shelters[i]['id'],'物資名':name,'配送個数':int(send),'重量合計':int(send*w),'コスト':int(send*c)})
+                caps[i]-=send*w; rem-=send
+    df=pd.DataFrame(records)
+    grouped=df.groupby('避難所ID')['重量合計'].sum().to_dict() if not df.empty else {}
+    need_map={sid: int(np.ceil(wt/DRONE_CAPACITY_KG)) for sid,wt in grouped.items()}
+    return df, need_map
 
-# Endpoint: Optimize and return results
 @app.route('/optimize', methods=['GET'])
-def optimize():
+@require_client
+def optimize(cid:str):
     try:
-        cid = request.args.get('client_id')
-        if not cid or cid not in client_data:
-            return jsonify({'error': 'Invalid or missing client_id'}), 400
-        supplies = client_data[cid]['supplies']
-        shelters = client_data[cid]['shelters']
-        drones = client_data[cid]['drones']
-        if not (supplies and shelters and drones):
-            return jsonify({'error': 'Missing supplies, shelters, or drones data'}), 400
-        available = [d for d in drones if isinstance(d, dict) and d.get('available')]
-        max_drones = len(available)
-        sel_idx, need_arr, W_arr = select_shelters(supplies, shelters, max_drones)
-        sel_ids = [shelters[j]['id'] for j in sel_idx]
-        need_map = {shelters[j]['id']: int(need_arr[j]) for j in sel_idx}
-        df, total_w, total_cost, leftovers = assign_supplies(supplies, shelters, sel_idx)
+        data=client_data[cid]
+        if not all(data[key] for key in ('supplies','shelters','drones')):
+            return jsonify({'error':'Incomplete data'}),400
+        max_dr=sum(1 for d in data['drones'] if d.get('available'))
+        sel,need_arr=select_shelters(data['supplies'],data['shelters'],max_dr)
+        df,need_map=assign_supplies(data['supplies'],data['shelters'],sel)
         return jsonify({
-            'selected_shelters': sel_ids,
-            'need_drones': need_map,
-            'total_available_drones': max_drones,
-            'used_drones': sum(need_map.values()),
-            'assignments': df.to_dict(orient='records'),
-            'total_weight': total_w,
-            'total_cost': total_cost,
-            'leftovers': leftovers
-        }), 200
+            'selected_shelters':[data['shelters'][i]['id'] for i in sel],
+            'need_drones':need_map,
+            'total_available_drones':max_dr,
+            'used_drones':sum(need_map.values()),
+            'assignments':df.to_dict(orient='records'),
+            'total_weight':int(df['重量合計'].sum()) if not df.empty else 0,
+            'total_cost':int(df['コスト'].sum()) if not df.empty else 0,
+            'leftovers':{sup['name']:sup['count']-sum(rec['配送個数'] for rec in df.to_dict('records') if rec['物資名']==sup['name']) for sup in data['supplies']}
+        }),200
     except Exception as e:
-        logging.exception("Optimization failed")
-        return jsonify({'error': 'Internal server error', 'detail': str(e)}), 500
+        logging.exception('Optimization error')
+        return jsonify({'error':'Internal server error','detail':str(e)}),500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__=='__main__':
+    app.run(host='0.0.0.0',port=5000,debug=True)
