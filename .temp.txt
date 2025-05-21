@@ -1,1 +1,173 @@
-{"8e9c9434-d658-47ff-8952-f40034a40887": {"supplies": [{"name": "\u6c34", "weight": 2, "cost": 100, "count": 5}, {"cost": 500, "count": 3, "name": "\u6bdb\u5e03", "weight": 5}, {"cost": 300, "count": 4, "name": "\u7f36\u8a70", "weight": 3}], "shelters": [{"demand": {"\u6c34": 1}, "id": "a", "in_transit": false, "stock": {"\u6c34": 1}, "urgency": 0}, {"demand": {"\u6bdb\u5e03": 1}, "id": "b", "in_transit": false, "stock": {"\u6c34": 1}, "urgency": 0}, {"demand": {"\u7f36\u8a70": 1}, "id": "c", "in_transit": false, "stock": {"\u6c34": 1}, "urgency": 0}], "drones": [{"id": "1", "available": true}, {"id": "4", "available": true}, {"id": "3", "available": true}, {"id": "2", "available": true}, {"id": "5", "available": true}]}, "2ffb1f05-4c0f-4d19-aa24-0cb856bc5fc1": {"supplies": [], "shelters": [], "drones": []}}
+{
+  "8e9c9434-d658-47ff-8952-f40034a40887": {
+    "supplies": [
+      {
+        "name": "\u6c34",
+        "weight": 2,
+        "cost": 100,
+        "count": 5
+      },
+      {
+        "cost": 500,
+        "count": 3,
+        "name": "\u6bdb\u5e03",
+        "weight": 5
+      },
+      {
+        "cost": 300,
+        "count": 4,
+        "name": "\u7f36\u8a70",
+        "weight": 3
+      }
+    ],
+    "shelters": [
+      {
+        "demand": {
+          "\u6c34": 1
+        },
+        "id": "a",
+        "in_transit": false,
+        "stock": {
+          "\u6c34": 1
+        },
+        "urgency": 0
+      },
+      {
+        "demand": {
+          "\u6bdb\u5e03": 1
+        },
+        "id": "b",
+        "in_transit": false,
+        "stock": {
+          "\u6c34": 1
+        },
+        "urgency": 0
+      },
+      {
+        "demand": {
+          "\u7f36\u8a70": 1
+        },
+        "id": "c",
+        "in_transit": false,
+        "stock": {
+          "\u6c34": 1
+        },
+        "urgency": 0
+      }
+    ],
+    "drones": [
+      {
+        "id": "1",
+        "available": true
+      },
+      {
+        "id": "4",
+        "available": true
+      },
+      {
+        "id": "3",
+        "available": true
+      },
+      {
+        "id": "2",
+        "available": true
+      },
+      {
+        "id": "5",
+        "available": true
+      }
+    ]
+  },
+  "2ffb1f05-4c0f-4d19-aa24-0cb856bc5fc1": {
+    "supplies": [],
+    "shelters": [],
+    "drones": []
+  },
+  "6f5e6c27-2233-4a99-8613-12012d4117ef": {
+    "supplies": [],
+    "shelters": [],
+    "drones": []
+  },
+  "a6f2fa89-1dc5-41ec-9ef3-9456c4abad97": {
+    "supplies": [],
+    "shelters": [],
+    "drones": []
+  },
+  "b66dc529-1531-4431-a34a-ddd98d399af5": {
+    "supplies": [
+      {
+        "name": "\u65b0\u898f\u3042",
+        "weight": 1,
+        "cost": 0,
+        "count": 1
+      }
+    ],
+    "shelters": [],
+    "drones": []
+  },
+  "4f67b14f-ec73-467f-a246-cb31992a40e8": {
+    "supplies": [
+      {
+        "cost": 0,
+        "count": 1,
+        "name": "\u65b0\u898fa",
+        "weight": 1
+      },
+      {
+        "name": "\u65b0\u898f2",
+        "weight": 1,
+        "cost": 0,
+        "count": 1
+      },
+      {
+        "name": "\u65b0\u898f3",
+        "weight": 1,
+        "cost": 0,
+        "count": 1
+      },
+      {
+        "name": "\u65b0\u898f4",
+        "weight": 1,
+        "cost": 0,
+        "count": 1
+      },
+      {
+        "name": "\u65b0\u898f5",
+        "weight": 1,
+        "cost": 0,
+        "count": 1
+      }
+    ],
+    "shelters": [
+      {
+        "id": "\u65b0\u898f_1",
+        "urgency": 1,
+        "stock": {
+          "\u65b0\u898fa": 1
+        },
+        "demand": {
+          "\u65b0\u898f2": 1
+        },
+        "in_transit": false
+      }
+    ],
+    "drones": [
+      {
+        "available": true,
+        "id": "\u65b0\u898f_1"
+      },
+      {
+        "id": "\u65b0\u898f_2",
+        "available": true
+      },
+      {
+        "id": "\u65b0\u898f_3",
+        "available": true
+      },
+      {
+        "id": "\u65b0\u898f_4",
+        "available": true
+      }
+    ]
+  }
+}

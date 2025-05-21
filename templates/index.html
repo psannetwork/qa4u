@@ -32,56 +32,61 @@
     .section { margin-top: 1em; }
     .section h3 { margin-bottom: .5em; }
     footer { text-align: center; margin-top: 2em; font-size: .8em; color: #888; }
+    .form-group input:invalid, .form-group select:invalid {
+      border-color: #dc3545;
+    }
+    .nested-list input[type="number"]:invalid {
+      border-color: #dc3545;
+    }
+    [role="alert"] {
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
 <header><h1>ドローン物資配布 デバッグツール</h1></header>
 <div class="main">
   <div class="card">
-    <div class="form-group">
+    <div class="form-group" role="group" aria-label="クライアントID入力">
       <label for="client_id">クライアントID:</label>
-      <input type="text" id="client_id" placeholder="空欄なら登録" value="">
-      <button id="btn_register" class="btn">登録</button>
-      <button id="btn_set_client" class="btn disabled" disabled>決定</button>
+      <input type="text" id="client_id" placeholder="空欄なら登録" value="" required>
+      <button id="btn_register" class="btn" aria-label="新規クライアント登録">登録</button>
+      <button id="btn_set_client" class="btn" disabled aria-label="クライアント決定">決定</button>
     </div>
-    <div id="message" class="message"></div>
-    <div class="tabs">
-      <button data-tab="supplies" class="active">Supplies</button>
-      <button data-tab="shelters">Shelters</button>
-      <button data-tab="drones">Drones</button>
-      <button data-tab="optimize">Optimize</button>
+    <div id="message" class="message" role="alert" aria-live="assertive"></div>
+    <div class="tabs" role="tablist">
+      <button data-tab="supplies" class="active" role="tab" aria-selected="true">Supplies</button>
+      <button data-tab="shelters" role="tab" aria-selected="false">Shelters</button>
+      <button data-tab="drones" role="tab" aria-selected="false">Drones</button>
+      <button data-tab="optimize" role="tab" aria-selected="false">Optimize</button>
     </div>
-
-    <div id="panel_supplies" class="panel active">
-      <button class="btn add" id="add_supplies">行追加</button>
-      <table>
+    <div id="panel_supplies" class="panel active" role="tabpanel">
+      <button class="btn add" id="add_supplies" aria-label="物資行追加">行追加</button>
+      <table aria-label="物資一覧">
         <thead><tr><th>名前</th><th>重量</th><th>コスト</th><th>個数</th><th>操作</th></tr></thead>
         <tbody id="tb_supplies"></tbody>
       </table>
     </div>
-
-    <div id="panel_shelters" class="panel">
-      <button class="btn add disabled" id="add_shelters" disabled>行追加</button>
-      <table>
+    <div id="panel_shelters" class="panel" role="tabpanel">
+      <button class="btn add" id="add_shelters" disabled aria-label="避難所行追加">行追加</button>
+      <table aria-label="避難所一覧">
         <thead><tr><th>ID</th><th>緊急度</th><th>在庫</th><th>需要</th><th>輸送中</th><th>操作</th></tr></thead>
         <tbody id="tb_shelters"></tbody>
       </table>
     </div>
-
-    <div id="panel_drones" class="panel">
-      <button class="btn add" id="add_drones">行追加</button>
-      <table>
+    <div id="panel_drones" class="panel" role="tabpanel">
+      <button class="btn add" id="add_drones" aria-label="ドローン行追加">行追加</button>
+      <table aria-label="ドローン一覧">
         <thead><tr><th>ID</th><th>利用可能</th><th>操作</th></tr></thead>
         <tbody id="tb_drones"></tbody>
       </table>
     </div>
-
-    <div id="panel_optimize" class="panel">
-      <button class="btn" id="run_optimize">最適化 実行</button>
-      <div id="opt_result" class="message success"></div>
-      <div id="result_assignments" class="section"></div>
-      <div id="result_leftovers" class="section"></div>
-      <div id="result_need_drones" class="section"></div>
+    <div id="panel_optimize" class="panel" role="tabpanel">
+      <button class="btn" id="run_optimize" aria-label="最適化実行">最適化 実行</button>
+      <div id="opt_result" class="message" role="alert" aria-live="assertive"></div>
+      <div id="result_assignments" class="section" role="region" aria-labelledby="assign-heading"></div>
+      <div id="result_leftovers" class="section" role="region" aria-labelledby="leftover-heading"></div>
+      <div id="result_need_drones" class="section" role="region" aria-labelledby="drone-heading"></div>
     </div>
   </div>
 </div>
@@ -96,11 +101,13 @@ function showMessage(txt, type = 'success') {
   m.textContent = txt;
   m.className = `message ${type}`;
 }
+
 function clearMessage() {
   const m = document.getElementById('message');
   m.textContent = '';
   m.className = 'message';
 }
+
 function debounce(fn, ms = 300) {
   let timer;
   return (...args) => {
@@ -108,16 +115,25 @@ function debounce(fn, ms = 300) {
     timer = setTimeout(() => fn(...args), ms);
   };
 }
+
 function createCell(text, editable = true, onBlur) {
   const td = document.createElement('td');
   td.textContent = text;
-  if (editable) { td.contentEditable = true; td.onblur = onBlur; }
+  if (editable) { 
+    td.contentEditable = true; 
+    td.onblur = onBlur;
+    td.setAttribute('spellcheck', 'false');
+  }
   return td;
 }
+
 function deleteBtn(onDel) {
   const td = document.createElement('td');
   const btn = document.createElement('button');
-  btn.textContent = '削除'; btn.className = 'btn add'; btn.onclick = onDel;
+  btn.textContent = '削除'; 
+  btn.className = 'btn add'; 
+  btn.onclick = onDel;
+  btn.setAttribute('aria-label', '削除');
   td.append(btn);
   return td;
 }
@@ -131,143 +147,333 @@ async function registerClient() {
     document.getElementById('client_id').value = data.client_id;
     await setClient(); // 自動決定実行
     showMessage(`ID取得: ${data.client_id}`);
-  } catch (e) { showMessage(e.message, 'error'); }
+  } catch (e) { 
+    showMessage(e.message, 'error'); 
+  }
 }
+
 async function setClient() {
   const cidInput = document.getElementById('client_id');
   const cid = cidInput.value.trim();
   const btnSet = document.getElementById('btn_set_client');
-  if (!cid) { showMessage('IDを入力してください', 'error'); return; }
+  if (!cid) { 
+    showMessage('IDを入力してください', 'error'); 
+    return; 
+  }
   clearMessage();
-  btnSet.disabled = true; btnSet.classList.add('disabled');
-  await loadAll();
-  showMessage('データ同期完了');
+  btnSet.disabled = true; 
+  btnSet.classList.add('disabled');
+  try {
+    await loadAll();
+    showMessage('データ同期完了');
+  } catch (e) {
+    showMessage('データ同期に失敗しました', 'error');
+  } finally {
+    btnSet.disabled = false; 
+    btnSet.classList.remove('disabled');
+  }
 }
 
 // クライアントID入力時に決定ボタンの有効/無効を切り替え
 const cidInputElem = document.getElementById('client_id');
 cidInputElem.addEventListener('input', () => {
   const btnSet = document.getElementById('btn_set_client');
-  if (cidInputElem.value.trim()) { btnSet.disabled = false; btnSet.classList.remove('disabled'); }
-  else { btnSet.disabled = true; btnSet.classList.add('disabled'); }
+  if (cidInputElem.value.trim()) { 
+    btnSet.disabled = false; 
+    btnSet.classList.remove('disabled'); 
+  }
+  else { 
+    btnSet.disabled = true; 
+    btnSet.classList.add('disabled'); 
+  }
+});
+
+// 初期ロード時にクライアントIDがある場合、自動で同期
+window.addEventListener('load', async () => {
+  if (cidInputElem.value.trim()) {
+    await setClient();
+  }
 });
 
 document.getElementById('btn_register').onclick = registerClient;
 document.getElementById('btn_set_client').onclick = setClient;
 
 document.querySelectorAll('.tabs button').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
-    btn.classList.add('active');
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-selected', 'false'));
+    btn.setAttribute('aria-selected', 'true');
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
     document.getElementById('panel_' + btn.dataset.tab).classList.add('active');
     clearMessage();
-  };
+  });
 });
 
 // --- Supplies ---
 const syncSupplies = debounce(async () => {
-  const cid = cidInputElem.value.trim(); if (!cid) return;
-  await fetch(`/supplies?client_id=${encodeURIComponent(cid)}&supplies=${encodeURIComponent(JSON.stringify(supplies))}`);
+  const cid = cidInputElem.value.trim(); 
+  if (!cid) return;
+  try {
+    await fetch(`/supplies?client_id=${encodeURIComponent(cid)}&supplies=${encodeURIComponent(JSON.stringify(supplies))}`);
+  } catch (e) {
+    showMessage('物資同期に失敗しました', 'error');
+  }
 });
+
 async function loadSupplies() {
   const cid = cidInputElem.value.trim();
-  const res = await fetch(`/get_supplies?client_id=${encodeURIComponent(cid)}`);
-  const data = await res.json();
-  supplies = data.supplies || [];
-  // Shelter の行追加ボタン活性化条件
-  const btnShelterAdd = document.getElementById('add_shelters');
-  const canAddShelter = supplies.length > 0;
-  btnShelterAdd.disabled = !canAddShelter;
-  btnShelterAdd.classList.toggle('disabled', !canAddShelter);
-  renderSupplies();
+  try {
+    const res = await fetch(`/get_supplies?client_id=${encodeURIComponent(cid)}`);
+    const data = await res.json();
+    supplies = data.supplies || [];
+    // Shelter の行追加ボタン活性化条件
+    const btnShelterAdd = document.getElementById('add_shelters');
+    const canAddShelter = supplies.length > 0;
+    btnShelterAdd.disabled = !canAddShelter;
+    btnShelterAdd.classList.toggle('disabled', !canAddShelter);
+    renderSupplies();
+  } catch (e) {
+    showMessage('物資取得に失敗しました', 'error');
+  }
 }
+
+function validateNumeric(value, fieldName) {
+  if (isNaN(value) || Number(value) < 0) {
+    showMessage(`${fieldName}は0以上の数値を入力してください`, 'error');
+    return false;
+  }
+  return true;
+}
+
 function renderSupplies() {
   const tb = document.getElementById('tb_supplies'); tb.innerHTML = '';
   supplies.forEach((s, i) => {
     const tr = document.createElement('tr');
     tr.append(
-      createCell(s.name, true, async () => { s.name = tr.children[0].textContent.trim(); await syncSupplies(); await loadShelters(); }),
-      createCell(s.weight, true, async () => { const v = parseFloat(tr.children[1].textContent); s.weight = isNaN(v)? s.weight : v; await syncSupplies(); }),
-      createCell(s.cost, true, async () => { const v = parseFloat(tr.children[2].textContent); s.cost = isNaN(v)? s.cost : v; await syncSupplies(); }),
-      createCell(s.count, true, async () => { const v = parseInt(tr.children[3].textContent,10); s.count = isNaN(v)? s.count : v; await syncSupplies(); }),
-      deleteBtn(async () => { supplies.splice(i,1); await syncSupplies(); renderSupplies(); loadShelters(); })
+      createCell(s.name, true, async () => { 
+        s.name = tr.children[0].textContent.trim(); 
+        await syncSupplies(); 
+        await loadShelters(); 
+      }),
+      createCell(s.weight, true, async () => { 
+        const v = parseFloat(tr.children[1].textContent); 
+        if (validateNumeric(v, '重量')) {
+          s.weight = isNaN(v)? s.weight : v; 
+          await syncSupplies(); 
+        }
+      }),
+      createCell(s.cost, true, async () => { 
+        const v = parseFloat(tr.children[2].textContent); 
+        if (validateNumeric(v, 'コスト')) {
+          s.cost = isNaN(v)? s.cost : v; 
+          await syncSupplies(); 
+        }
+      }),
+      createCell(s.count, true, async () => { 
+        const v = parseInt(tr.children[3].textContent,10); 
+        if (validateNumeric(v, '個数')) {
+          s.count = isNaN(v)? s.count : v; 
+          await syncSupplies(); 
+        }
+      }),
+      deleteBtn(async () => { 
+        supplies.splice(i,1); 
+        await syncSupplies(); 
+        renderSupplies(); 
+        loadShelters(); 
+      })
     );
     tb.append(tr);
   });
 }
-document.getElementById('add_supplies').onclick = () => { supplies.push({ name:'新規', weight:1, cost:0, count:1 }); renderSupplies(); syncSupplies(); };
+
+document.getElementById('add_supplies').onclick = () => { 
+  supplies.push({ name:'新規', weight:1, cost:0, count:1 }); 
+  renderSupplies(); 
+  syncSupplies(); 
+};
 
 // --- Shelters ---
 const syncShelters = debounce(async () => {
-  const cid = cidInputElem.value.trim(); if (!cid) return;
-  await fetch(`/shelters?client_id=${encodeURIComponent(cid)}&shelters=${encodeURIComponent(JSON.stringify(shelters))}`);
+  const cid = cidInputElem.value.trim(); 
+  if (!cid) return;
+  try {
+    await fetch(`/shelters?client_id=${encodeURIComponent(cid)}&shelters=${encodeURIComponent(JSON.stringify(shelters))}`);
+  } catch (e) {
+    showMessage('避難所同期に失敗しました', 'error');
+  }
 });
+
 async function loadShelters() {
   const cid = cidInputElem.value.trim();
-  const res = await fetch(`/get_shelters?client_id=${encodeURIComponent(cid)}`);
-  const data = await res.json();
-  shelters = data.shelters || [];
-  renderShelters();
+  try {
+    const res = await fetch(`/get_shelters?client_id=${encodeURIComponent(cid)}`);
+    const data = await res.json();
+    shelters = data.shelters || [];
+    renderShelters();
+  } catch (e) {
+    showMessage('避難所取得に失敗しました', 'error');
+  }
 }
+
 function getUniqueSupplyKey(current) {
-  for (let x of supplies) { if (!current.hasOwnProperty(x.name)) return x.name; }
+  for (let x of supplies) { 
+    if (!current.hasOwnProperty(x.name)) return x.name; 
+  }
 }
+
 function renderShelters() {
   const tb = document.getElementById('tb_shelters'); tb.innerHTML = '';
   shelters.forEach((sh,i) => {
     const tr = document.createElement('tr');
     // ID, 緊急度
     tr.append(
-      createCell(sh.id, true, async()=>{ sh.id = tr.children[0].textContent.trim(); await syncShelters(); }),
-      createCell(sh.urgency, true, async()=>{ const v = parseInt(tr.children[1].textContent,10); sh.urgency = isNaN(v)? sh.urgency : v; await syncShelters(); })
+      createCell(sh.id, true, async()=>{
+        sh.id = tr.children[0].textContent.trim(); 
+        await syncShelters(); 
+      }),
+      createCell(sh.urgency, true, async()=>{
+        const v = parseInt(tr.children[1].textContent,10); 
+        if (validateNumeric(v, '緊急度')) {
+          sh.urgency = isNaN(v)? sh.urgency : v; 
+          await syncShelters(); 
+        }
+      })
     );
     // 在庫
     const tdStock=document.createElement('td');
     const ulStock=document.createElement('ul'); ulStock.className='nested-list';
     Object.entries(sh.stock).forEach(([k,v])=>{
       const li=document.createElement('li');
-      const sel=document.createElement('select'); supplies.forEach(x=> sel.add(new Option(x.name,x.name)));
+      const sel=document.createElement('select'); 
+      supplies.forEach(x=> sel.add(new Option(x.name,x.name)));
       sel.value=k;
-      sel.onchange=()=>{ const nk=sel.value; sh.stock[nk]=sh.stock[k]; delete sh.stock[k]; renderShelters(); syncShelters(); };
-      const inp=document.createElement('input'); inp.type='number'; inp.value=v;
-      inp.onchange=()=>{ sh.stock[k]=Number(inp.value); syncShelters(); };
-      const del=document.createElement('button'); del.textContent='×'; del.className='btn add'; del.onclick=()=>{ delete sh.stock[k]; renderShelters(); syncShelters(); };
+      sel.onchange=()=>{
+        const nk=sel.value; 
+        sh.stock[nk]=sh.stock[k]; 
+        delete sh.stock[k]; 
+        renderShelters(); 
+        syncShelters(); 
+      };
+      const inp=document.createElement('input'); 
+      inp.type='number'; 
+      inp.value=v;
+      inp.onchange=()=>{
+        const val = Number(inp.value);
+        if (validateNumeric(val, '在庫')) {
+          sh.stock[k] = val;
+          syncShelters(); 
+        }
+      };
+      const del=document.createElement('button'); 
+      del.textContent='×'; 
+      del.className='btn add'; 
+      del.onclick=()=>{
+        delete sh.stock[k]; 
+        renderShelters(); 
+        syncShelters(); 
+      };
       li.append(sel,inp,del);
       ulStock.append(li);
     });
-    const btnAddStock=document.createElement('button'); btnAddStock.textContent='＋'; btnAddStock.className='btn add';
+    const btnAddStock=document.createElement('button'); 
+    btnAddStock.textContent='＋'; 
+    btnAddStock.className='btn add';
     const keyStock=getUniqueSupplyKey(sh.stock);
-    if (!keyStock) { btnAddStock.disabled = true; btnAddStock.classList.add('disabled'); }
-    btnAddStock.onclick = () => { if(keyStock){ sh.stock[keyStock]=1; renderShelters(); syncShelters(); } };
+    if (!keyStock) { 
+      btnAddStock.disabled = true; 
+      btnAddStock.classList.add('disabled'); 
+    }
+    btnAddStock.onclick = () => { 
+      if(keyStock){
+        sh.stock[keyStock]=1; 
+        renderShelters(); 
+        syncShelters(); 
+      } 
+    };
     tdStock.append(ulStock,btnAddStock);
     tr.append(tdStock);
     // 需要
-    const tdDem=document.createElement('td'); const ulDem=document.createElement('ul'); ulDem.className='nested-list';
+    const tdDem=document.createElement('td'); 
+    const ulDem=document.createElement('ul'); ulDem.className='nested-list';
     Object.entries(sh.demand).forEach(([k,v])=>{
-      const li=document.createElement('li'); const sel=document.createElement('select'); supplies.forEach(x=> sel.add(new Option(x.name,x.name)));
-      sel.value=k; sel.onchange=()=>{ const nk=sel.value; sh.demand[nk]=sh.demand[k]; delete sh.demand[k]; renderShelters(); syncShelters(); };
-      const inp=document.createElement('input'); inp.type='number'; inp.value=v; inp.onchange=()=>{ sh.demand[k]=Number(inp.value); syncShelters(); };
-      const del=document.createElement('button'); del.textContent='×'; del.className='btn add'; del.onclick=()=>{ delete sh.demand[k]; renderShelters(); syncShelters(); };
+      const li=document.createElement('li'); 
+      const sel=document.createElement('select'); 
+      supplies.forEach(x=> sel.add(new Option(x.name,x.name)));
+      sel.value=k; 
+      sel.onchange=()=>{
+        const nk=sel.value; 
+        sh.demand[nk]=sh.demand[k]; 
+        delete sh.demand[k]; 
+        renderShelters(); 
+        syncShelters(); 
+      };
+      const inp=document.createElement('input'); 
+      inp.type='number'; 
+      inp.value=v; 
+      inp.onchange=()=>{
+        const val = Number(inp.value);
+        if (validateNumeric(val, '需要')) {
+          sh.demand[k] = val;
+          syncShelters(); 
+        }
+      };
+      const del=document.createElement('button'); 
+      del.textContent='×'; 
+      del.className='btn add'; 
+      del.onclick=()=>{
+        delete sh.demand[k]; 
+        renderShelters(); 
+        syncShelters(); 
+      };
       li.append(sel,inp,del);
       ulDem.append(li);
     });
-    const btnAddDem=document.createElement('button'); btnAddDem.textContent='＋'; btnAddDem.className='btn add';
+    const btnAddDem=document.createElement('button'); 
+    btnAddDem.textContent='＋'; 
+    btnAddDem.className='btn add';
     const keyDem=getUniqueSupplyKey(sh.demand);
-    if (!keyDem) { btnAddDem.disabled=true; btnAddDem.classList.add('disabled'); }
-    btnAddDem.onclick=()=>{ if(keyDem){ sh.demand[keyDem]=1; renderShelters(); syncShelters(); } };
+    if (!keyDem) { 
+      btnAddDem.disabled=true; 
+      btnAddDem.classList.add('disabled'); 
+    }
+    btnAddDem.onclick=()=>{
+      if(keyDem){ 
+        sh.demand[keyDem]=1; 
+        renderShelters(); 
+        syncShelters(); 
+      } 
+    };
     tdDem.append(ulDem,btnAddDem);
     tr.append(tdDem);
     // 輸送中チェック
-    const tdTrans=document.createElement('td'); const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=sh.in_transit; cb.onchange=async()=>{ sh.in_transit=cb.checked; await syncShelters(); };
-    tdTrans.append(cb); tr.append(tdTrans);
-    tr.append(deleteBtn(async()=>{ shelters.splice(i,1); await syncShelters(); renderShelters(); }));
+    const tdTrans=document.createElement('td'); 
+    const cb=document.createElement('input'); 
+    cb.type='checkbox'; 
+    cb.checked=sh.in_transit; 
+    cb.onchange=async()=>{
+      sh.in_transit=cb.checked; 
+      await syncShelters(); 
+    };
+    tdTrans.append(cb); 
+    tr.append(tdTrans);
+    tr.append(deleteBtn(async()=>{
+      shelters.splice(i,1); 
+      await syncShelters(); 
+      renderShelters(); 
+    }));
     tb.append(tr);
   });
 }
+
 document.getElementById('add_shelters').onclick = () => {
   const defaultName = supplies.length ? supplies[0].name : '';
-  shelters.push({ id: `新規_${shelters.length + 1}`, urgency: 1, stock: defaultName ? { [defaultName]: 1 } : {}, demand: defaultName ? { [defaultName]: 1 } : {}, in_transit: false });
+  shelters.push({ 
+    id: `新規_${shelters.length + 1}`, 
+    urgency: 1, 
+    stock: defaultName ? { [defaultName]: 1 } : {}, 
+    demand: defaultName ? { [defaultName]: 1 } : {}, 
+    in_transit: false 
+  });
   renderShelters();
   syncShelters();
 };
@@ -276,17 +482,25 @@ document.getElementById('add_shelters').onclick = () => {
 const syncDrones = debounce(async () => {
   const cid = document.getElementById('client_id').value.trim();
   if (!cid) return;
-  await fetch(
-    `/drones?client_id=${encodeURIComponent(cid)}&drones=${encodeURIComponent(JSON.stringify(drones))}`
-  );
+  try {
+    await fetch(
+      `/drones?client_id=${encodeURIComponent(cid)}&drones=${encodeURIComponent(JSON.stringify(drones))}`
+    );
+  } catch (e) {
+    showMessage('ドローン同期に失敗しました', 'error');
+  }
 });
 
 async function loadDrones() {
   const cid = document.getElementById('client_id').value.trim();
-  const res = await fetch(`/get_drones?client_id=${encodeURIComponent(cid)}`);
-  const data = await res.json();
-  drones = data.drones || [];
-  renderDrones();
+  try {
+    const res = await fetch(`/get_drones?client_id=${encodeURIComponent(cid)}`);
+    const data = await res.json();
+    drones = data.drones || [];
+    renderDrones();
+  } catch (e) {
+    showMessage('ドローン取得に失敗しました', 'error');
+  }
 }
 
 function renderDrones() {
@@ -295,7 +509,11 @@ function renderDrones() {
   drones.forEach((dr, i) => {
     const tr = document.createElement('tr');
     tr.append(
-      createCell(dr.id, true, async () => { dr.id = tr.children[0].textContent.trim(); await syncDrones(); renderDrones(); }),
+      createCell(dr.id, true, async () => { 
+        dr.id = tr.children[0].textContent.trim(); 
+        await syncDrones(); 
+        renderDrones(); 
+      }),
       (() => {
         const td = document.createElement('td');
         const cb = document.createElement('input');
@@ -308,7 +526,11 @@ function renderDrones() {
         td.append(cb);
         return td;
       })(),
-      deleteBtn(async () => { drones.splice(i, 1); await syncDrones(); renderDrones(); })
+      deleteBtn(async () => { 
+        drones.splice(i, 1); 
+        await syncDrones(); 
+        renderDrones(); 
+      })
     );
     tb.append(tr);
   });
@@ -322,40 +544,62 @@ document.getElementById('add_drones').onclick = () => {
 
 // --- Load All ---
 async function loadAll() {
-  await Promise.all([loadSupplies(), loadShelters(), loadDrones()]);
+  try {
+    await Promise.all([loadSupplies(), loadShelters(), loadDrones()]);
+  } catch (e) {
+    showMessage('データ読み込みに失敗しました', 'error');
+  }
 }
-
+// Drones に利用可能ドローンがある場合のみ有効
+async function checkDronesAvailability() {
+  const cid = document.getElementById('client_id').value.trim();
+  const res = await fetch(`/get_drones?client_id=${encodeURIComponent(cid)}`);
+  const data = await res.json();
+  const hasAvailable = data.drones.some(d => d.available);
+  document.getElementById('run_optimize').disabled = !hasAvailable;
+  if (!hasAvailable) {
+    showMessage('ドローンが利用不可です。"利用可能"をチェックしてください', 'error');
+  }
+}
 // --- Optimize ---
 document.getElementById('run_optimize').onclick = async () => {
   const cid = document.getElementById('client_id').value.trim();
-  if (!cid) { showMessage('IDを入力してください', 'error'); return; }
+  if (!cid) return showMessage('IDを入力してください', 'error');
+  
+  // データ検証
+  const res = await fetch(`/get_supplies?client_id=${encodeURIComponent(cid)}`);
+  const data = await res.json();
+  if (!data.supplies.length) return showMessage('物資が未設定です', 'error');
   try {
     const res = await fetch(`/optimize?client_id=${encodeURIComponent(cid)}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
     const out = document.getElementById('opt_result');
-    out.innerHTML = `
-      <p>利用可能ドローン: ${data.total_available_drones}</p>
-      <p>使用ドローン: ${data.used_drones}</p>
-      <p>総重量: ${data.total_weight}kg</p>
-      <p>総コスト: ¥${data.total_cost}</p>
+    out.textContent = `
+      利用可能ドローン: ${data.total_available_drones}
+      使用ドローン: ${data.used_drones}
+      総重量: ${data.total_weight}kg
+      総コスト: ¥${data.total_cost}
     `;
     out.className = 'message success';
-
-    let html = '<h3>配送割り当て</h3><table><thead><tr>' +
+    let html = '<h3 id="assign-heading">配送割り当て</h3><table><thead><tr>' +
                '<th>避難所ID</th><th>物資名</th><th>個数</th><th>重量</th><th>コスト</th>' +
                '</tr></thead><tbody>';
-    data.assignments.forEach(a => { html += `<tr><td>${a['避難所ID']}</td><td>${a['物資名']}</td><td>${a['配送個数']}</td><td>${a['重量合計']}</td><td>¥${a['コスト']}</td></tr>`; });
+    data.assignments.forEach(a => { 
+      html += `<tr><td>${a['避難所ID']}</td><td>${a['物資名']}</td><td>${a['配送個数']}</td><td>${a['重量合計']}</td><td>¥${a['コスト']}</td></tr>`; 
+    });
     html += '</tbody></table>';
     document.getElementById('result_assignments').innerHTML = html;
-
-    html = '<h3>余剰物資</h3><table><thead><tr><th>物資名</th><th>残数</th></tr></thead><tbody>';
-    Object.entries(data.leftovers).forEach(([k, v]) => { html += `<tr><td>${k}</td><td>${v}</td></tr>`; });
+    html = '<h3 id="leftover-heading">余剰物資</h3><table><thead><tr><th>物資名</th><th>残数</th></tr></thead><tbody>';
+    Object.entries(data.leftovers).forEach(([k, v]) => { 
+      html += `<tr><td>${k}</td><td>${v}</td></tr>`; 
+    });
     html += '</tbody></table>';
     document.getElementById('result_leftovers').innerHTML = html;
-
-    html = '<h3>必要ドローン数</h3><table><thead><tr><th>避難所ID</th><th>ドローン数</th></tr></thead><tbody>';
-    Object.entries(data.need_drones).forEach(([k, v]) => { html += `<tr><td>${k}</td><td>${v}</td></tr>`; });
+    html = '<h3 id="drone-heading">必要ドローン数</h3><table><thead><tr><th>避難所ID</th><th>ドローン数</th></tr></thead><tbody>';
+    Object.entries(data.need_drones).forEach(([k, v]) => { 
+      html += `<tr><td>${k}</td><td>${v}</td></tr>`; 
+    });
     html += '</tbody></table>';
     document.getElementById('result_need_drones').innerHTML = html;
   } catch (e) {
@@ -366,7 +610,11 @@ document.getElementById('run_optimize').onclick = async () => {
 };
 
 // 初期ロード
-loadAll();
+window.addEventListener('load', async () => {
+  if (cidInputElem.value.trim()) {
+    await setClient();
+  }
+});
 </script>
 </body>
 </html>

@@ -9,13 +9,15 @@ Includes error handling to prevent runtime errors.
 Serves HTML client (index.html) and static templates directory.
 Supports replacing and appending supplies, shelters, and drones.
 """
+
 import uuid
 import json
 import logging
 import os
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS  # CORS 対応
 
-from flask import Flask, request, jsonify, send_from_directory, abort
 import numpy as np
 import pandas as pd
 import jijmodeling as jm
@@ -34,6 +36,7 @@ IN_TRANSIT_PENALTY = 1e3
 
 # -- Flask App Setup ----------------------------------------------------------
 app = Flask(__name__, static_folder=None, template_folder='templates')
+CORS(app)  # CORS 対応
 logging.basicConfig(level=logging.INFO)
 
 # In-memory storage: client_id -> data dict
@@ -41,18 +44,22 @@ client_data: Dict[str, Dict[str, List[Dict]]] = {}
 
 # -- Persistence -------------------------------------------------------------
 def load_data():
+    """Load client data from file."""
     global client_data
     if os.path.exists(PERSIST_FILE):
         try:
             with open(PERSIST_FILE, 'r', encoding='utf-8') as f:
                 client_data = json.load(f)
+            logging.info("Data loaded from persistence file.")
         except Exception:
             logging.exception('Failed to load persistence file')
 
 def save_data():
+    """Save current client data to file."""
     try:
         with open(PERSIST_FILE, 'w', encoding='utf-8') as f:
-            json.dump(client_data, f)
+            json.dump(client_data, f, indent=2)
+        logging.info("Data saved to persistence file.")
     except Exception:
         logging.exception('Failed to save persistence file')
 
@@ -60,6 +67,7 @@ load_data()
 
 # -- Utility Functions -------------------------------------------------------
 def parse_json_list(param_str: str, param_name: str) -> List[Dict]:
+    """Parse JSON string into list of dicts."""
     try:
         data = json.loads(param_str)
     except json.JSONDecodeError:
@@ -71,6 +79,7 @@ def parse_json_list(param_str: str, param_name: str) -> List[Dict]:
     raise ValueError(f"{param_name} should be an object or list of objects")
 
 def require_client(func):
+    """Decorator to require valid client_id."""
     def wrapper(*args, **kwargs):
         cid = request.args.get('client_id', '').strip()
         if not cid or cid not in client_data:
@@ -83,25 +92,33 @@ def require_client(func):
 @app.route('/', methods=['GET'])
 @app.route('/index.html', methods=['GET'])
 def index():
+    """Serve index.html."""
     return send_from_directory('templates', 'index.html')
 
 @app.route('/templates/<path:filename>', methods=['GET'])
 def serve_static(filename: str):
+    """Serve static files from templates directory."""
     try:
         return send_from_directory('templates', filename)
     except FileNotFoundError:
-        abort(404, description=f"{filename} not found")
+        logging.warning(f"Static file not found: {filename}")
+        return jsonify({'error': f"{filename} not found"}), 404
 
+# Client Management
 @app.route('/register_client', methods=['GET'])
 def register_client():
+    """Register a new client."""
     cid = str(uuid.uuid4())
     client_data[cid] = {'supplies': [], 'shelters': [], 'drones': []}
     save_data()
+    logging.info(f"Registered new client: {cid}")
     return jsonify({'client_id': cid}), 200
 
+# Supplies Management
 @app.route('/supplies', methods=['GET'])
 @require_client
 def update_supplies(cid: str):
+    """Replace supplies for a client."""
     data_str = request.args.get('supplies', '')
     if not data_str:
         return jsonify({'error': 'Missing supplies parameter'}), 400
@@ -116,6 +133,7 @@ def update_supplies(cid: str):
 @app.route('/add_supplies', methods=['GET'])
 @require_client
 def add_supplies(cid: str):
+    """Append supplies for a client."""
     data_str = request.args.get('supplies', '')
     if not data_str:
         return jsonify({'error': 'Missing supplies parameter'}), 400
@@ -130,11 +148,14 @@ def add_supplies(cid: str):
 @app.route('/get_supplies', methods=['GET'])
 @require_client
 def get_supplies(cid: str):
+    """Get supplies for a client."""
     return jsonify({'supplies': client_data[cid]['supplies']}), 200
 
+# Shelters Management
 @app.route('/shelters', methods=['GET'])
 @require_client
 def update_shelters(cid: str):
+    """Replace shelters for a client."""
     data_str = request.args.get('shelters', '')
     if not data_str:
         return jsonify({'error': 'Missing shelters parameter'}), 400
@@ -149,6 +170,7 @@ def update_shelters(cid: str):
 @app.route('/add_shelters', methods=['GET'])
 @require_client
 def add_shelters(cid: str):
+    """Append shelters for a client."""
     data_str = request.args.get('shelters', '')
     if not data_str:
         return jsonify({'error': 'Missing shelters parameter'}), 400
@@ -163,11 +185,14 @@ def add_shelters(cid: str):
 @app.route('/get_shelters', methods=['GET'])
 @require_client
 def get_shelters(cid: str):
+    """Get shelters for a client."""
     return jsonify({'shelters': client_data[cid]['shelters']}), 200
 
+# Drones Management
 @app.route('/drones', methods=['GET'])
 @require_client
 def update_drones(cid: str):
+    """Replace drones for a client."""
     data_str = request.args.get('drones', '')
     if not data_str:
         return jsonify({'error': 'Missing drones parameter'}), 400
@@ -182,6 +207,7 @@ def update_drones(cid: str):
 @app.route('/add_drones', methods=['GET'])
 @require_client
 def add_drones(cid: str):
+    """Append drones for a client."""
     data_str = request.args.get('drones', '')
     if not data_str:
         return jsonify({'error': 'Missing drones parameter'}), 400
@@ -196,9 +222,9 @@ def add_drones(cid: str):
 @app.route('/get_drones', methods=['GET'])
 @require_client
 def get_drones(cid: str):
+    """Get drones for a client."""
     return jsonify({'drones': client_data[cid]['drones']}), 200
 
-# -- Optimization ------------------------------------------------------------
 def select_shelters(
     supplies: List[Dict],
     shelters: List[Dict],
@@ -212,28 +238,27 @@ def select_shelters(
         sum(max(sh['demand'].get(s['name'], 0) - sh['stock'].get(s['name'], 0), 0) for s in supplies)
         for sh in shelters
     ], dtype=int)
+    
     need = np.ceil(shortages / DRONE_CAPACITY_KG).astype(int)
     weights = np.array([sh['urgency'] * shortages[i] for i, sh in enumerate(shelters)])
     in_transit = {i for i, sh in enumerate(shelters) if sh.get('in_transit')}
-
-    # Ensure we have enough drones to cover the minimum needs
-    total_need = np.sum(need)
-    if total_need == 0:
-        return [], np.array([])
-
-    # Prioritize shelters with higher urgency and greater shortage
+    
+    # 緊急度×不足量でソート
     sorted_indices = np.argsort(-weights)
     sel = []
     current_drones_used = 0
-
+    
     for i in sorted_indices:
-        if current_drones_used + need[i] > max_drones:
+        if shortages[i] <= 0:
+            continue  # 不足がなければスキップ
+        required = need[i]
+        if current_drones_used + required > max_drones:
             continue
         sel.append(shelters[i]['id'])
-        current_drones_used += need[i]
-        if current_drones_used == max_drones:
+        current_drones_used += required
+        if current_drones_used >= max_drones:
             break
-
+    
     return sel, need
 
 def assign_supplies(
@@ -242,6 +267,7 @@ def assign_supplies(
     selected: List[str],
     max_drones: int
 ) -> Tuple[pd.DataFrame, Dict[str, int], Dict[str, int]]:
+    """Assign supplies to selected shelters."""
     shelters_dict = {sh['id']: sh for sh in shelters}
     caps = {sh_id: CAPACITY_PER_SHELTER for sh_id in selected}
     records = []
@@ -276,37 +302,36 @@ def assign_supplies(
     grouped = df.groupby('避難所ID')['重量合計'].sum().to_dict() if not df.empty else {}
     need_map = {sid: int(np.ceil(wt / DRONE_CAPACITY_KG)) for sid, wt in grouped.items()}
 
-    # Ensure the number of selected shelters does not exceed the number of available drones
     actual_used_drones = sum(need_map.values())
-
-    # Adjust need_map to ensure it doesn't exceed available drones
-    while actual_used_drones > max_drones:
-        # Find the shelter with the lowest urgency that uses the most drones
-        max_drones_shelter = max(need_map.items(), key=lambda item: (item[1], -shelters_dict[item[0]].get('urgency', 0)))
-        need_map[max_drones_shelter[0]] -= 1
+    while actual_used_drones > max_drones and need_map:
+        max_shelter = max(need_map.items(), key=lambda x: (-shelters_dict[x[0]].get('urgency', 0), x[1]))
+        need_map[max_shelter[0]] -= 1
         actual_used_drones -= 1
+        if need_map[max_shelter[0]] <= 0:
+            del need_map[max_shelter[0]]
 
     return df, need_map, leftovers
 
 @app.route('/optimize', methods=['GET'])
 @require_client
 def optimize(cid: str):
+    """Run optimization for the current client."""
     try:
         data = client_data[cid]
         if not all(data[key] for key in ('supplies', 'shelters', 'drones')):
             return jsonify({'error': 'Incomplete data'}), 400
-        
+
         max_dr = sum(1 for d in data['drones'] if d.get('available'))
         if max_dr == 0:
             return jsonify({'error': 'No available drones'}), 400
-        
+
         sel, need_arr = select_shelters(data['supplies'], data['shelters'], max_dr)
         df, need_map, leftovers = assign_supplies(data['supplies'], data['shelters'], sel, max_dr)
-        
+
         if df.empty:
-            logging.info(f"No assignments could be made for client {cid}. Selected shelters: {sel}, Need map: {need_map}, Max drones: {max_dr}")
+            logging.warning(f"No assignments could be made for client {cid}")
             return jsonify({'error': 'No assignments could be made'}), 400
-        
+
         return jsonify({
             'selected_shelters': sel,
             'need_drones': need_map,
@@ -317,6 +342,7 @@ def optimize(cid: str):
             'total_cost': int(df['コスト'].sum()) if not df.empty else 0,
             'leftovers': leftovers
         }), 200
+
     except Exception as e:
         logging.exception('Optimization error')
         return jsonify({'error': 'Internal server error', 'detail': str(e)}), 500
